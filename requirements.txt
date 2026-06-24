@@ -2,3 +2,4 @@ qdrant-client
 fastembed
 datasets
 rank-bm25
+sentence-transformers

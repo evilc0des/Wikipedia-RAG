@@ -124,23 +124,22 @@ print(f"BM25 index built:  {len(sparse_retriever.chunk_store)} children indexed"
 print(f"Dense index built: {len(dense_retriever.chunk_store)} children indexed")
 print(f"Full chunk store:  {len(chunk_store)} chunks (children + sections + pages)")
 
-from retrieval import hybrid_retrieve
+from retrieval import hybrid_retrieve_with_rerank
 
-for section_mode in (False, True):
-    result = hybrid_retrieve(
-        "How is the letter A used in English writing?",
-        sparse_retriever,
-        dense_retriever,
-        chunk_store,
-        top_k=5,
-        expand_to_section=section_mode,
-    )
+result = hybrid_retrieve_with_rerank(
+    "How is the letter A used in English writing?",
+    sparse_retriever,
+    dense_retriever,
+    chunk_store,
+)
 
-    print(f"\n=== expand_to_section={section_mode} ===")
-    print(f"Query: {result['query']}")
-    print(f"sparse results: {len(result['sparse_results'])}, dense results: {len(result['dense_results'])}")
-    for i, r in enumerate(result["results"]):
-        print(f"\n--- Result {i+1} (score={r['score']:.4f}, type={r['chunk_type']}) ---")
-        print(r["text"][:250])
+print(f"Query: {result['query']}")
+print(f"sparse results: {len(result['sparse_results'])}, dense results: {len(result['dense_results'])}")
+print(f"sections returned: {len(result['results'])}")
+for i, r in enumerate(result["results"]):
+    child_ids_str = ", ".join(r.get("child_ids", []))
+    print(f"\n--- Section {i+1} (score={r['score']:.4f}, type={r['chunk_type']}) ---")
+    print(f"Child IDs: [{child_ids_str}]")
+    print(r["text"][:300])
 
 dense_retriever.client.close()

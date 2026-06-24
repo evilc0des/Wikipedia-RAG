@@ -33,6 +33,7 @@ venv/
 *.user
 *.userosscache
 *.sln.docstates
+.kilo/
 
 # Generated files
 dist/
