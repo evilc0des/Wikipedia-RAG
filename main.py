@@ -1,45 +1,7 @@
-import uuid
-
 from datasets import load_dataset
 
-SECTION_PREFIX = "Section::::"
-BULLET_PREFIX = "BULLET::::"
-
-
-def parse_section(text):
-    if text.startswith(SECTION_PREFIX):
-        title = text[len(SECTION_PREFIX):].strip()
-        return title, title.split(":")
-    return None, None
-
-
-def parse_bullet(text):
-    if text.startswith(BULLET_PREFIX):
-        return f"- {text[len(BULLET_PREFIX):].strip()}"
-    return None
-
-
-def create_new_chunk(chunk_type, text, **metadata):
-    return {
-        "chunk_id": str(uuid.uuid4()),
-        "doc_id": metadata.get("doc_id"),
-        "chunk_type": chunk_type,
-        "text": text,
-        "section_path": metadata.get("section_path"),
-        "title": metadata.get("title"),
-        "source_url": metadata.get("source_url"),
-        "paragraph_start": metadata.get("paragraph_start"),
-        "paragraph_end": metadata.get("paragraph_end"),
-        "prev_id": metadata.get("prev_id"),
-        "next_id": metadata.get("next_id"),
-        "parent_id": metadata.get("parent_chunk_id"),
-        "children_ids": [],
-    }
-
-
-def _prev_id(items):
-    return items[-1]["chunk_id"] if items else None
-
+from chunking import create_new_chunk, parse_bullet, parse_section, _prev_id
+from indexing import build_indexes
 
 ds = load_dataset("facebook/kilt_wikipedia", split="full", trust_remote_code=True, streaming=True)
 
@@ -154,10 +116,8 @@ for s in ds.take(2):
 
     print(f"Page {len(pages)}: {s['wikipedia_title']} — {len(sections)} sections, {len(chunks)} chunks")
 
-
-# def build_indexes(chunks):
-#     # 1. prepare texts + ids + metadata
-#     # 2. build sparse index
-#     # 3. build dense index
-#     # 4. persist both
-#     return sparse_index, dense_index, chunk_store
+sparse_retriever, dense_retriever, chunk_store = build_indexes(
+    chunks, sparse_path="data/sparse_index.pkl", dense_path="data/qdrant"
+)
+print(f"BM25 index built:  {len(chunk_store)} children indexed")
+print(f"Dense index built: {len(dense_retriever.chunk_store)} children indexed")

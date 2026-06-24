@@ -1,0 +1,47 @@
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Dependency directories
+node_modules/
+
+# Environment files
+.env
+.env.*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+
+# Editor settings
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Generated files
+dist/
+build/
+coverage/
+
+# Data and output
+*.sqlite
+*.db
+logs/
+outputs/
+data/
