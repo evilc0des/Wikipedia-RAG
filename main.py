@@ -126,18 +126,21 @@ print(f"Full chunk store:  {len(chunk_store)} chunks (children + sections + page
 
 from retrieval import hybrid_retrieve
 
-result = hybrid_retrieve(
-    "What is the history of letter A?",
-    sparse_retriever,
-    dense_retriever,
-    chunk_store,
-    top_k=5,
-    expand_to_section=True,
-)
+for section_mode in (False, True):
+    result = hybrid_retrieve(
+        "How is the letter A used in English writing?",
+        sparse_retriever,
+        dense_retriever,
+        chunk_store,
+        top_k=5,
+        expand_to_section=section_mode,
+    )
 
-print(f"\nQuery: {result['query']}")
-print(f"sparse results: {len(result['sparse_results'])}")
-print(f"dense results:  {len(result['dense_results'])}")
-for i, r in enumerate(result["results"]):
-    print(f"\n--- Result {i+1} (score={r['score']:.4f}, type={r['chunk_type']}) ---")
-    print(r["text"][:300])
+    print(f"\n=== expand_to_section={section_mode} ===")
+    print(f"Query: {result['query']}")
+    print(f"sparse results: {len(result['sparse_results'])}, dense results: {len(result['dense_results'])}")
+    for i, r in enumerate(result["results"]):
+        print(f"\n--- Result {i+1} (score={r['score']:.4f}, type={r['chunk_type']}) ---")
+        print(r["text"][:250])
+
+dense_retriever.client.close()

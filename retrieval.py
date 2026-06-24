@@ -27,7 +27,10 @@ def hybrid_retrieve(
 
     fused_scores = reciprocal_rank_fusion([sparse_results, dense_results], k=rrf_k)
 
-    sorted_ids = sorted(fused_scores, key=lambda cid: fused_scores[cid], reverse=True)
+    sparse_rank = {r["chunk_id"]: i + 1 for i, r in enumerate(sparse_results)}
+    dense_rank = {r["chunk_id"]: i + 1 for i, r in enumerate(dense_results)}
+
+    sorted_ids = sorted(fused_scores.keys(), key=lambda cid: fused_scores[cid], reverse=True)
 
     results = []
     seen = set()
@@ -45,13 +48,29 @@ def hybrid_retrieve(
                 section = chunk_store.get(section_id)
                 if section and section_id not in seen:
                     seen.add(section_id)
-                    result = {**section, "score": fused_scores[chunk_id], "child_ids": [chunk_id]}
+                    result = {
+                        **section,
+                        "score": fused_scores[chunk_id],
+                        "child_ids": [chunk_id],
+                        "sparse_rank": sparse_rank.get(chunk_id),
+                        "dense_rank": dense_rank.get(chunk_id)
+                    }
                     results.append(result)
             else:
-                result = {**chunk, "score": fused_scores[chunk_id]}
+                result = {
+                    **chunk,
+                    "score": fused_scores[chunk_id],
+                    "sparse_rank": sparse_rank.get(chunk_id),
+                    "dense_rank": dense_rank.get(chunk_id)
+                }
                 results.append(result)
         else:
-            result = {**chunk, "score": fused_scores[chunk_id]}
+            result = {
+                **chunk,
+                "score": fused_scores[chunk_id],
+                "sparse_rank": sparse_rank.get(chunk_id),
+                "dense_rank": dense_rank.get(chunk_id)
+            }
             results.append(result)
 
         if len(results) >= top_k:

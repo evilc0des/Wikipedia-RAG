@@ -126,7 +126,7 @@ class DenseRetriever:
         return hits
 
     def save(self):
-        self.client.close()
+        pass
 
     @classmethod
     def load(cls, storage_path="data/qdrant", collection_name="dense_index", model_name="BAAI/bge-small-en-v1.5"):
