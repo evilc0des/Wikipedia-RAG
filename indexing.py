@@ -149,4 +149,5 @@ def build_indexes(chunks, sparse_path=None, dense_path="data/qdrant"):
     if sparse_path:
         dense.save()
 
-    return retriever, dense, retriever.chunk_store
+    chunk_store = {c["chunk_id"]: c for c in chunks}
+    return retriever, dense, chunk_store

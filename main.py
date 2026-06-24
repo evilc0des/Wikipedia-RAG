@@ -116,8 +116,28 @@ for s in ds.take(2):
 
     print(f"Page {len(pages)}: {s['wikipedia_title']} — {len(sections)} sections, {len(chunks)} chunks")
 
+all_chunks = chunks + sections + pages
 sparse_retriever, dense_retriever, chunk_store = build_indexes(
-    chunks, sparse_path="data/sparse_index.pkl", dense_path="data/qdrant"
+    all_chunks, sparse_path="data/sparse_index.pkl", dense_path="data/qdrant"
 )
-print(f"BM25 index built:  {len(chunk_store)} children indexed")
+print(f"BM25 index built:  {len(sparse_retriever.chunk_store)} children indexed")
 print(f"Dense index built: {len(dense_retriever.chunk_store)} children indexed")
+print(f"Full chunk store:  {len(chunk_store)} chunks (children + sections + pages)")
+
+from retrieval import hybrid_retrieve
+
+result = hybrid_retrieve(
+    "What is the history of letter A?",
+    sparse_retriever,
+    dense_retriever,
+    chunk_store,
+    top_k=5,
+    expand_to_section=True,
+)
+
+print(f"\nQuery: {result['query']}")
+print(f"sparse results: {len(result['sparse_results'])}")
+print(f"dense results:  {len(result['dense_results'])}")
+for i, r in enumerate(result["results"]):
+    print(f"\n--- Result {i+1} (score={r['score']:.4f}, type={r['chunk_type']}) ---")
+    print(r["text"][:300])
