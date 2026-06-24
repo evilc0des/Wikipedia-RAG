@@ -1,6 +1,7 @@
 from collections import defaultdict
 
 from reranking import Reranker, assemble_section_context
+from generation import build_context_blocks
 
 _reranker = None
 

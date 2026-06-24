@@ -15,6 +15,8 @@ class Reranker:
         scores = self.model.predict(pairs)
 
         for c, score in zip(candidates, scores):
+            if "retrieval_score" not in c:
+                c["retrieval_score"] = c.get("score", 0.0)
             c["rerank_score"] = float(score)
 
         candidates.sort(key=lambda c: c["rerank_score"], reverse=True)
@@ -25,7 +27,11 @@ def assemble_section_context(child_results, chunk_store, top_sections=3):
     if not child_results:
         return []
 
-    sections = defaultdict(lambda: {"best_score": -999.0, "child_ids": []})
+    sections = defaultdict(lambda: {
+        "best_rerank_score": -999.0,
+        "best_retrieval_score": -999.0,
+        "child_ids": [],
+    })
 
     for child in child_results:
         parent_id = child.get("parent_id")
@@ -34,13 +40,20 @@ def assemble_section_context(child_results, chunk_store, top_sections=3):
         if parent_id not in chunk_store:
             continue
 
-        score = child.get("rerank_score", child.get("score", 0.0))
+        rerank_score = child.get("rerank_score", -999.0)
+        retrieval_score = child.get("retrieval_score", child.get("score", 0.0))
         entry = sections[parent_id]
         entry["child_ids"].append(child["chunk_id"])
-        if score > entry["best_score"]:
-            entry["best_score"] = score
+        if rerank_score > entry["best_rerank_score"]:
+            entry["best_rerank_score"] = rerank_score
+        if retrieval_score > entry["best_retrieval_score"]:
+            entry["best_retrieval_score"] = retrieval_score
 
-    sorted_sections = sorted(sections.items(), key=lambda kv: kv[1]["best_score"], reverse=True)
+    sorted_sections = sorted(
+        sections.items(),
+        key=lambda kv: kv[1]["best_rerank_score"],
+        reverse=True,
+    )
     sorted_sections = sorted_sections[:top_sections]
 
     results = []
@@ -48,7 +61,9 @@ def assemble_section_context(child_results, chunk_store, top_sections=3):
         section = chunk_store[section_id]
         results.append({
             **section,
-            "score": data["best_score"],
+            "score": data["best_rerank_score"],
+            "rerank_score": data["best_rerank_score"],
+            "retrieval_score": data["best_retrieval_score"],
             "child_ids": data["child_ids"],
         })
 

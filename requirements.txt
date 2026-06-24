@@ -3,3 +3,5 @@ fastembed
 datasets
 rank-bm25
 sentence-transformers
+requests
+python-dotenv
