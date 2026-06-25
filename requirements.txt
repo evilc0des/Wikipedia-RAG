@@ -1,9 +1,9 @@
-qdrant-client>=1.12.0
-fastembed>=3.1.0,<4
-datasets>=2.14.0,<2.16
-huggingface_hub>=0.18.0,<0.21
+qdrant-client
+fastembed
+datasets==2.15.0
+huggingface_hub==0.20.3
 rank-bm25
-sentence-transformers>=2.7.0
+sentence-transformers
 requests
 python-dotenv
 onnxruntime-gpu   # GPU: onnxruntime-gpu (CUDA, production) or onnxruntime-directml (DX12, Windows dev)
