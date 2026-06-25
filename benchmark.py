@@ -141,7 +141,7 @@ class QueryDataset:
         from datasets import load_dataset
         ds = load_dataset(
             "facebook/kilt_wikipedia", split="full",
-            trust_remote_code=True, streaming=True,
+            streaming=True,
         )
 
         queries = []
@@ -577,7 +577,7 @@ class BenchmarkRunner:
         tdb = ChunkStoreDB(str(temp_db))
         ds = load_dataset(
             "facebook/kilt_wikipedia", split="full",
-            trust_remote_code=True, streaming=True,
+            streaming=True,
         )
 
         pages = []
