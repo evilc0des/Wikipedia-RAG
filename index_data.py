@@ -38,7 +38,7 @@ def main():
 
     Path(SPARSE_SHARDS_DIR).mkdir(parents=True, exist_ok=True)
 
-    ds = load_dataset("facebook/kilt_wikipedia", split="full", trust_remote_code=True, streaming=True)
+    ds = load_dataset("facebook/kilt_wikipedia", split="full", streaming=True)
     db = ChunkStoreDB(DB_PATH)
 
     last_child_id = db.get_last_chunk_id("child")
