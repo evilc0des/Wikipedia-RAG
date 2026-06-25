@@ -97,6 +97,19 @@ class ChunkStoreDB:
             (json.dumps(children_ids), chunk_id),
         )
 
+    def get_last_chunk_id(self, chunk_type):
+        row = self.conn.execute(
+            "SELECT chunk_id FROM chunks WHERE chunk_type = ? ORDER BY rowid DESC LIMIT 1",
+            (chunk_type,),
+        ).fetchone()
+        return row[0] if row else None
+
+    def get_last_page_doc_id(self):
+        row = self.conn.execute(
+            "SELECT doc_id FROM chunks WHERE chunk_type = 'page' ORDER BY rowid DESC LIMIT 1",
+        ).fetchone()
+        return row[0] if row else None
+
     def close(self):
         self.conn.commit()
         self.conn.close()

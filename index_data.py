@@ -20,12 +20,24 @@ Path(SPARSE_SHARDS_DIR).mkdir(parents=True, exist_ok=True)
 ds = load_dataset("facebook/kilt_wikipedia", split="full", trust_remote_code=True, streaming=True)
 db = ChunkStoreDB(DB_PATH)
 
-last_child_id = None
-last_section_id = None
-last_page_id = None
-page_count = 0
+last_child_id = db.get_last_chunk_id("child")
+last_section_id = db.get_last_chunk_id("section")
+last_page_id = db.get_last_chunk_id("page")
+page_count = db.count_children("page")
 
+if page_count > 0:
+    last_doc_id = db.get_last_page_doc_id()
+    print(f"Resuming from page {page_count} (last doc_id={last_doc_id}). "
+          f"child={last_child_id}, section={last_section_id}, page={last_page_id}")
+    print("Skipping already-processed pages...")
+
+skipped = 0
 for s in ds:
+    if skipped < page_count:
+        skipped += 1
+        if skipped % 1000 == 0:
+            print(f"  Skipped {skipped}/{page_count} pages...")
+        continue
     chunks = []
     sections = []
     last_chunk_len = 0
