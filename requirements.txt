@@ -5,3 +5,4 @@ rank-bm25
 sentence-transformers
 requests
 python-dotenv
+onnxruntime-gpu   # GPU: onnxruntime-gpu (CUDA, production) or onnxruntime-directml (DX12, Windows dev)

@@ -80,7 +80,31 @@ class SparseRetriever:
 class DenseRetriever:
     def __init__(self, storage_path="data/qdrant", collection_name="dense_index", model_name="BAAI/bge-small-en-v1.5"):
         self.collection_name = collection_name
-        self.model = TextEmbedding(model_name=model_name)
+        try:
+            import onnxruntime
+            available = onnxruntime.get_available_providers()
+        except Exception:
+            available = []
+        gpu_providers = {"CUDAExecutionProvider", "DmlExecutionProvider", "TensorrtExecutionProvider"}
+        has_gpu = bool(gpu_providers & set(available))
+        if "CUDAExecutionProvider" in available:
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        elif "DmlExecutionProvider" in available:
+            providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
+        else:
+            providers = ["CPUExecutionProvider"]
+            if not has_gpu:
+                import sys
+                print(
+                    "  WARNING: No GPU provider available (CPU only). Install one of:\n"
+                    "    pip install onnxruntime-gpu        # CUDA (production)\n"
+                    "    pip install onnxruntime-directml   # DirectML (Windows dev)",
+                    file=sys.stderr,
+                )
+        self.model = TextEmbedding(
+            model_name=model_name,
+            providers=providers,
+        )
         self.client = QdrantClient(path=storage_path)
         self.chunk_store = []
 
@@ -112,7 +136,7 @@ class DenseRetriever:
         )
 
         texts = [c["text"] for c in children]
-        embeddings = list(self.model.embed(texts))
+        embeddings = _embed_batch(self, texts)
 
         points = [
             PointStruct(
@@ -216,6 +240,27 @@ def build_sparse_indexes_from_db(db_path, output_dir, shard_size=100000):
     print(f"  Built {shard_id} BM25 shards total.")
 
 
+def _is_dml_active(dense):
+    try:
+        import onnxruntime
+        return "DmlExecutionProvider" in onnxruntime.get_available_providers()
+    except Exception:
+        return False
+
+
+_DML_SUB_BATCH = 16
+
+
+def _embed_batch(dense, texts):
+    if not _is_dml_active(dense):
+        return list(dense.model.embed(texts))
+    all_embeddings = []
+    for i in range(0, len(texts), _DML_SUB_BATCH):
+        chunk = texts[i:i + _DML_SUB_BATCH]
+        all_embeddings.extend(dense.model.embed(chunk))
+    return all_embeddings
+
+
 def build_dense_index_from_db(db_path, dense_path, batch_size=1000):
     from db import ChunkStoreDB
     db = ChunkStoreDB(db_path)
@@ -248,7 +293,7 @@ def build_dense_index_from_db(db_path, dense_path, batch_size=1000):
         if not batch:
             break
         texts = [c["text"] for c in batch]
-        embeddings = list(dense.model.embed(texts))
+        embeddings = _embed_batch(dense, texts)
 
         points = [
             PointStruct(

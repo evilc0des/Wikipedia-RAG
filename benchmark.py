@@ -929,7 +929,7 @@ class BenchmarkRunner:
 
 def main():
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
 
     parser = argparse.ArgumentParser(
         description="Benchmark RAG pipeline layers",

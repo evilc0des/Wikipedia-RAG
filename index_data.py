@@ -32,7 +32,7 @@ if page_count > 0:
     print("Skipping already-processed pages...")
 
 skipped = 0
-for s in ds:
+for s in ds.take(2000):
     if skipped < page_count:
         skipped += 1
         if skipped % 1000 == 0:

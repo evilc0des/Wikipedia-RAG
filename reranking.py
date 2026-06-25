@@ -1,11 +1,23 @@
 from collections import defaultdict
 
+import torch
 from sentence_transformers import CrossEncoder
+
+
+def _get_device():
+    if not torch.cuda.is_available():
+        return "cpu"
+    major, _ = torch.cuda.get_device_capability()
+    if major >= 7:
+        return "cuda"
+    return "cpu"
 
 
 class Reranker:
     def __init__(self, model_name="cross-encoder/ms-marco-MiniLM-L-6-v2"):
-        self.model = CrossEncoder(model_name)
+        device = _get_device()
+        self.model = CrossEncoder(model_name, device=device)
+        print(f"  Reranker loaded on {device}")
 
     def rerank(self, query, candidates, top_k=8):
         if not candidates:
