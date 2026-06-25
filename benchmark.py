@@ -232,7 +232,9 @@ class BenchmarkRunner:
             raise FileNotFoundError("No sparse index found")
 
         self._dense = DenseRetriever.load(
-            storage_path=self.config.get("dense_path", "data/qdrant")
+            storage_path=self.config.get("dense_path", "data/qdrant"),
+            qdrant_url=self.config.get("qdrant_url"),
+            qdrant_api_key=self.config.get("qdrant_api_key"),
         )
         print("Dense: loaded")
 
@@ -680,7 +682,9 @@ class BenchmarkRunner:
             shutil.rmtree(str(temp_qdrant))
 
         t0 = time.perf_counter()
-        build_dense_index_from_db(str(temp_db), str(temp_qdrant), batch_size=batch_size)
+        build_dense_index_from_db(str(temp_db), str(temp_qdrant), batch_size=batch_size,
+                                  qdrant_url=self.config.get("qdrant_url"),
+                                  qdrant_api_key=self.config.get("qdrant_api_key"))
         total_s = time.perf_counter() - t0
 
         tdb = ChunkStoreDB(str(temp_db))
@@ -852,6 +856,8 @@ def main():
     parser.add_argument("--sparse-index-path", default="data/sparse_index.pkl")
     parser.add_argument("--sparse-shards-dir", default="data/sparse_shards")
     parser.add_argument("--dense-path", default="data/qdrant")
+    parser.add_argument("--qdrant-url", default=os.environ.get("QDRANT_URL"))
+    parser.add_argument("--qdrant-api-key", default=os.environ.get("QDRANT_API_KEY") or None)
     parser.add_argument("--keep-temp", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
 
@@ -886,6 +892,8 @@ def main():
         "sparse_index_path": args.sparse_index_path,
         "sparse_shards_dir": args.sparse_shards_dir,
         "dense_path": args.dense_path,
+        "qdrant_url": args.qdrant_url,
+        "qdrant_api_key": args.qdrant_api_key,
         "keep_temp": args.keep_temp,
         "seed": args.seed,
     }

@@ -1,9 +1,11 @@
 import os
 import pickle
 import re
+import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
+import requests
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from fastembed import TextEmbedding
@@ -80,8 +82,12 @@ class SparseRetriever:
 
 
 class DenseRetriever:
-    def __init__(self, storage_path="data/qdrant", collection_name="dense_index", model_name="BAAI/bge-small-en-v1.5"):
+    def __init__(self, storage_path="data/qdrant", collection_name="dense_index",
+                 model_name="BAAI/bge-small-en-v1.5", qdrant_url=None, qdrant_api_key=None):
         self.collection_name = collection_name
+        self._qdrant_url = qdrant_url or os.environ.get("QDRANT_URL")
+        self._qdrant_api_key = qdrant_api_key or os.environ.get("QDRANT_API_KEY") or None
+        self._is_remote = bool(self._qdrant_url)
         try:
             import onnxruntime
             available = onnxruntime.get_available_providers()
@@ -107,7 +113,10 @@ class DenseRetriever:
             model_name=model_name,
             providers=providers,
         )
-        self.client = QdrantClient(path=storage_path)
+        if self._is_remote:
+            self.client = QdrantClient(url=self._qdrant_url, api_key=self._qdrant_api_key)
+        else:
+            self.client = QdrantClient(path=storage_path)
         self.chunk_store = []
 
         if not self.client.collection_exists(collection_name):
@@ -186,8 +195,10 @@ class DenseRetriever:
         pass
 
     @classmethod
-    def load(cls, storage_path="data/qdrant", collection_name="dense_index", model_name="BAAI/bge-small-en-v1.5"):
-        instance = cls(storage_path=storage_path, collection_name=collection_name, model_name=model_name)
+    def load(cls, storage_path="data/qdrant", collection_name="dense_index",
+             model_name="BAAI/bge-small-en-v1.5", qdrant_url=None, qdrant_api_key=None):
+        instance = cls(storage_path=storage_path, collection_name=collection_name,
+                       model_name=model_name, qdrant_url=qdrant_url, qdrant_api_key=qdrant_api_key)
         if instance.client.collection_exists(collection_name):
             count = instance.client.count(collection_name=collection_name)
             if count.count > len(instance.chunk_store):
@@ -195,13 +206,15 @@ class DenseRetriever:
         return instance
 
 
-def build_indexes(chunks, sparse_path=None, dense_path="data/qdrant"):
+def build_indexes(chunks, sparse_path=None, dense_path="data/qdrant",
+                  qdrant_url=None, qdrant_api_key=None):
     retriever = SparseRetriever()
     retriever.index(chunks)
     if sparse_path:
         retriever.save(sparse_path)
 
-    dense = DenseRetriever(storage_path=dense_path)
+    dense = DenseRetriever(storage_path=dense_path, qdrant_url=qdrant_url,
+                           qdrant_api_key=qdrant_api_key)
     dense.index(chunks)
     if sparse_path:
         dense.save()
@@ -297,12 +310,14 @@ def _embed_batch(dense, texts):
     return all_embeddings
 
 
-def build_dense_index_from_db(db_path, dense_path, batch_size=1000):
+def build_dense_index_from_db(db_path, dense_path, batch_size=1000,
+                              qdrant_url=None, qdrant_api_key=None):
     from db import ChunkStoreDB
     db = ChunkStoreDB(db_path)
     total = db.count_children("child")
 
-    dense = DenseRetriever(storage_path=dense_path)
+    dense = DenseRetriever(storage_path=dense_path, qdrant_url=qdrant_url,
+                           qdrant_api_key=qdrant_api_key)
 
     collection_exists = dense.client.collection_exists(dense.collection_name)
     existing_count = 0
@@ -360,3 +375,56 @@ def build_dense_index_from_db(db_path, dense_path, batch_size=1000):
 
     db.close()
     print(f"  Dense: embedded {total}/{total} children")
+
+
+def _qdrant_headers(api_key):
+    headers = {}
+    if api_key:
+        headers["api-key"] = api_key
+    return headers
+
+
+def create_qdrant_snapshot(qdrant_url, collection_name, api_key=None):
+    url = f"{qdrant_url.rstrip('/')}/collections/{collection_name}/snapshots"
+    resp = requests.post(url, headers=_qdrant_headers(api_key), timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("result") or not data["result"].get("name"):
+        raise RuntimeError(f"Snapshot creation returned unexpected response: {data}")
+    return data["result"]
+
+
+def download_qdrant_snapshot(qdrant_url, collection_name, snapshot_name, output_path, api_key=None):
+    url = f"{qdrant_url.rstrip('/')}/collections/{collection_name}/snapshots/{snapshot_name}"
+    resp = requests.get(url, headers=_qdrant_headers(api_key), timeout=300)
+    resp.raise_for_status()
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "wb") as f:
+        f.write(resp.content)
+    return output_path
+
+
+def import_qdrant_snapshot(qdrant_url, collection_name, snapshot_path, api_key=None):
+    url = f"{qdrant_url.rstrip('/')}/collections/{collection_name}/snapshots/upload"
+    headers = _qdrant_headers(api_key)
+    with open(snapshot_path, "rb") as f:
+        resp = requests.put(url, headers=headers, files={"snapshot": f}, timeout=600)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def wait_for_qdrant(qdrant_url, timeout_seconds=60, interval=2):
+    deadline = time.monotonic() + timeout_seconds
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            resp = requests.get(f"{qdrant_url.rstrip('/')}/health", timeout=5)
+            if resp.status_code == 200:
+                return True
+        except requests.RequestException as e:
+            last_error = e
+        time.sleep(interval)
+    raise TimeoutError(
+        f"Qdrant at {qdrant_url} did not become healthy within {timeout_seconds}s. "
+        f"Last error: {last_error}"
+    )

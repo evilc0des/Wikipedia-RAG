@@ -27,6 +27,9 @@ def main():
     from datasets import load_dataset
     from indexing import build_sparse_indexes_from_db, build_dense_index_from_db
 
+    qdrant_url = os.environ.get("QDRANT_URL")
+    qdrant_api_key = os.environ.get("QDRANT_API_KEY") or None
+
     parser = argparse.ArgumentParser(description="Ingest and index Wikipedia pages for RAG")
     parser.add_argument("--pages", type=int, default=2000, help="Number of pages to process (default: 2000)")
     parser.add_argument("--workers", type=int, default=os.cpu_count(),
@@ -82,7 +85,8 @@ def main():
     build_sparse_indexes_from_db(DB_PATH, SPARSE_SHARDS_DIR, shard_size=100000)
     print("Sparse (BM25 sharded) indexes built.")
 
-    build_dense_index_from_db(DB_PATH, DENSE_PATH, batch_size=1000)
+    build_dense_index_from_db(DB_PATH, DENSE_PATH, batch_size=1000,
+                              qdrant_url=qdrant_url, qdrant_api_key=qdrant_api_key)
     print("Dense (Qdrant) index built.")
 
     print("Indexing complete.")

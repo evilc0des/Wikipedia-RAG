@@ -18,8 +18,9 @@ else:
     sys.exit(1)
 
 dense_retriever = DenseRetriever.load()
+qdrant_mode = "remote" if dense_retriever._is_remote else "local (disk)"
 print(f"Sparse index loaded: {len(sparse_retriever.shards) if sparse_retriever._is_sharded else 1} shard(s)")
-print(f"Dense index loaded: {len(dense_retriever.chunk_store)} children")
+print(f"Dense index loaded: {len(dense_retriever.chunk_store)} children  [qdrant: {qdrant_mode}]")
 
 db = ChunkStoreDB("data/chunks.db")
 print(f"Chunk store loaded: {db.count_children()} entries")
