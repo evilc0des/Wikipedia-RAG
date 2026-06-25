@@ -14,6 +14,7 @@ Usage:
 import argparse
 import json
 import math
+import os
 import random
 import shutil
 import statistics
@@ -23,19 +24,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from datasets import load_dataset
-
 from db import ChunkStoreDB
-from indexing import (
-    SparseRetriever,
-    DenseRetriever,
-    build_sparse_indexes_from_db,
-    build_dense_index_from_db,
-)
-from retrieval import hybrid_retrieve, hybrid_retrieve_with_rerank, reciprocal_rank_fusion
-from reranking import Reranker, assemble_section_context
-from generation import AnswerGenerator, build_context_blocks
-from chunking import parse_section, parse_bullet, create_new_chunk
+from chunking import process_pages
 
 
 def latency_stats(timings_ms):
@@ -148,6 +138,7 @@ class QueryDataset:
         print(f"Generating queries from {num_pages} Wikipedia pages...")
         db = ChunkStoreDB(self.db_path)
 
+        from datasets import load_dataset
         ds = load_dataset(
             "facebook/kilt_wikipedia", split="full",
             trust_remote_code=True, streaming=True,
@@ -199,122 +190,6 @@ class QueryDataset:
         return queries
 
 
-def chunk_page(page_data, prev_child_id, prev_section_id):
-    s = page_data
-    chunks = []
-    sections = []
-    last_chunk_len = 0
-
-    def _prev(items):
-        return items[-1]["chunk_id"] if items else prev_child_id
-
-    def _sprev(items):
-        return items[-1]["chunk_id"] if items else prev_section_id
-
-    for idx, para in enumerate(s["text"]["paragraph"]):
-        section_title, section_path = parse_section(para)
-        bullet = parse_bullet(para) if section_title is None else None
-
-        if section_title is not None:
-            if last_chunk_len == 0 and chunks:
-                chunks.pop()
-            chunk = create_new_chunk(
-                "child", section_title,
-                doc_id=s["wikipedia_id"],
-                section_path=section_path,
-                title=s["wikipedia_title"],
-                source_url=s["history"]["url"],
-                paragraph_start=idx,
-                paragraph_end=idx,
-                prev_id=_prev(chunks),
-                next_id=None,
-                parent_chunk_id=None,
-            )
-            chunks.append(chunk)
-            last_chunk_len = 0
-        elif bullet is not None:
-            if not chunks:
-                chunk = create_new_chunk(
-                    "child", bullet,
-                    doc_id=s["wikipedia_id"],
-                    section_path=[s["wikipedia_title"]],
-                    title=s["wikipedia_title"],
-                    source_url=s["history"]["url"],
-                    paragraph_start=idx,
-                    paragraph_end=idx,
-                    prev_id=_prev(chunks),
-                    next_id=None,
-                    parent_id=None,
-                )
-                chunks.append(chunk)
-            else:
-                chunks[-1]["text"] += f"\n{bullet}"
-                chunks[-1]["paragraph_end"] = idx
-            last_chunk_len += 1
-        else:
-            text = para.strip()
-            if not chunks:
-                chunk = create_new_chunk(
-                    "child", text,
-                    doc_id=s["wikipedia_id"],
-                    section_path=[s["wikipedia_title"]],
-                    title=s["wikipedia_title"],
-                    source_url=s["history"]["url"],
-                    paragraph_start=idx,
-                    paragraph_end=idx,
-                    prev_id=_prev(chunks),
-                    next_id=None,
-                    parent_id=None,
-                )
-                chunks.append(chunk)
-            else:
-                chunks[-1]["text"] += f"\n{text}"
-                chunks[-1]["paragraph_end"] = idx
-            last_chunk_len += 1
-
-        last_chunk = chunks[-1] if chunks else None
-        last_section = sections[-1] if sections else None
-        if last_chunk and last_chunk["section_path"] is not None:
-            is_new = (
-                last_section is None
-                or last_chunk["section_path"][0] != last_section["section_path"][0]
-            )
-            if is_new:
-                section_chunk = create_new_chunk(
-                    "section", last_chunk["text"],
-                    doc_id=s["wikipedia_id"],
-                    section_path=last_chunk["section_path"],
-                    title=s["wikipedia_title"],
-                    source_url=s["history"]["url"],
-                    paragraph_start=idx,
-                    paragraph_end=idx,
-                    prev_id=_sprev(sections),
-                    next_id=None,
-                    parent_id=None,
-                )
-                sections.append(section_chunk)
-            else:
-                sections[-1]["text"] += f"\n{last_chunk['text']}"
-                sections[-1]["paragraph_end"] = idx
-            last_chunk["parent_id"] = sections[-1]["chunk_id"]
-            sections[-1]["children_ids"].append(last_chunk["chunk_id"])
-
-    page_chunk = create_new_chunk(
-        "page", "\n".join(sc["text"] for sc in sections),
-        doc_id=s["wikipedia_id"],
-        section_path=[s["wikipedia_title"]],
-        title=s["wikipedia_title"],
-        source_url=s["history"]["url"],
-        paragraph_start=None,
-        paragraph_end=None,
-        prev_id=prev_section_id,
-        next_id=None,
-        parent_chunk_id=None,
-        children_ids=[sc["chunk_id"] for sc in sections],
-    )
-    return chunks, sections, page_chunk
-
-
 def _cleanup_path(path):
     for suffix in ["", "-shm", "-wal"]:
         p = Path(str(path) + suffix)
@@ -335,6 +210,8 @@ class BenchmarkRunner:
     def _load_retrievers(self):
         if self._db is not None:
             return
+        from indexing import SparseRetriever, DenseRetriever
+
         self._db = ChunkStoreDB(self.config["db_path"])
 
         sparse_shards = Path(self.config.get("sparse_shards_dir", "data/sparse_shards"))
@@ -361,10 +238,12 @@ class BenchmarkRunner:
 
     def _load_reranker(self):
         if self._reranker is None:
+            from reranking import Reranker
             self._reranker = Reranker()
 
     def _load_generator(self):
         if self._generator is None:
+            from generation import AnswerGenerator
             self._generator = AnswerGenerator({
                 "model": self.config.get("gen_model", "gemma-4-31B-it"),
                 "temperature": self.config.get("gen_temperature", 0.2),
@@ -381,6 +260,8 @@ class BenchmarkRunner:
         print(f"\nWarming up with {len(warmup_qs)} queries...")
         self._load_retrievers()
         self._load_reranker()
+
+        from retrieval import hybrid_retrieve_with_rerank
 
         for q in warmup_qs:
             qt = q["query"]
@@ -460,6 +341,7 @@ class BenchmarkRunner:
 
     def benchmark_rrf(self, queries):
         self._load_retrievers()
+        from retrieval import reciprocal_rank_fusion
         print("\n--- RRF Fusion ---")
         print("  pre-computing sparse+dense results...")
         sparse_r = []
@@ -499,6 +381,7 @@ class BenchmarkRunner:
     def benchmark_rerank(self, queries):
         self._load_retrievers()
         self._load_reranker()
+        from retrieval import hybrid_retrieve
         print("\n--- Reranking (Cross-Encoder) ---")
         print("  pre-computing fusion candidates...")
         candidates_list = []
@@ -531,6 +414,8 @@ class BenchmarkRunner:
     def benchmark_section_assembly(self, queries):
         self._load_retrievers()
         self._load_reranker()
+        from retrieval import hybrid_retrieve
+        from reranking import assemble_section_context
         print("\n--- Section Assembly (DB lookups) ---")
         print("  pre-computing reranked children...")
         reranked_list = []
@@ -559,6 +444,7 @@ class BenchmarkRunner:
     def benchmark_combined(self, queries):
         self._load_retrievers()
         self._load_reranker()
+        from retrieval import hybrid_retrieve_with_rerank
         print("\n--- Combined Retrieval (sparse -> dense -> RRF -> rerank -> assembly) ---")
         timings = []
         all_child_results = []
@@ -590,6 +476,8 @@ class BenchmarkRunner:
         self._load_retrievers()
         self._load_reranker()
         self._load_generator()
+        from retrieval import hybrid_retrieve_with_rerank
+        from generation import build_context_blocks
         gen_count = self.config.get("gen_queries", 50)
         gen_qs = queries[:gen_count]
         print(f"\n--- LLM Generation ({len(gen_qs)} queries) ---")
@@ -636,6 +524,8 @@ class BenchmarkRunner:
         self._load_retrievers()
         self._load_reranker()
         self._load_generator()
+        from retrieval import hybrid_retrieve_with_rerank
+        from generation import build_context_blocks
         gen_count = self.config.get("gen_queries", 50)
         gen_qs = queries[:gen_count]
         print(f"\n--- Generation Standalone ({len(gen_qs)} queries) ---")
@@ -682,39 +572,39 @@ class BenchmarkRunner:
         print(f"\n--- Chunking Benchmark ({num_pages} pages) ---")
         _cleanup_path(temp_db)
 
+        from datasets import load_dataset
+
         tdb = ChunkStoreDB(str(temp_db))
         ds = load_dataset(
             "facebook/kilt_wikipedia", split="full",
             trust_remote_code=True, streaming=True,
         )
-        total_paras = 0
-        total_children = 0
-        total_sections = 0
-        prev_cid = None
-        prev_sid = None
 
-        t0 = time.perf_counter()
+        pages = []
+        total_paras = 0
         for i, page in enumerate(ds):
             if i >= num_pages:
                 break
-            children, sections, page_chunk = chunk_page(page, prev_cid, prev_sid)
-            for c in children:
-                tdb.insert_chunk(c)
-            for sc in sections:
-                tdb.insert_chunk(sc)
-            tdb.insert_chunk(page_chunk)
-            if children:
-                prev_cid = children[-1]["chunk_id"]
-            if sections:
-                prev_sid = sections[-1]["chunk_id"]
+            pages.append(page)
             total_paras += len(page["text"]["paragraph"])
-            total_children += len(children)
-            total_sections += len(sections)
-            if (i + 1) % 100 == 0:
-                tdb.commit()
-                print(f"  {i + 1}/{num_pages}")
+
+        def _bench_progress(event, *args):
+            if event == "page":
+                pg, _, _ = args
+                if pg % 100 == 0:
+                    print(f"  {pg}/{num_pages}", flush=True)
+
+        t0 = time.perf_counter()
+        _, _, _, _ = process_pages(
+            pages, tdb,
+            workers=os.cpu_count(),
+            progress=_bench_progress,
+        )
         tdb.commit()
         total_s = time.perf_counter() - t0
+
+        total_children = tdb.count_children("child")
+        total_sections = tdb.count_children("section")
         tdb.close()
 
         self.results["chunking"] = {
@@ -737,6 +627,8 @@ class BenchmarkRunner:
         temp_db = Path("data/benchmark_chunks.db")
         temp_dir = Path("data/benchmark_sparse_shards")
         print(f"\n--- Sparse Indexing Benchmark (shard_size={shard_size}) ---")
+
+        from indexing import build_sparse_indexes_from_db
 
         if not temp_db.exists():
             print("  SKIPPED: temp DB not found (run chunking first)")
@@ -776,6 +668,8 @@ class BenchmarkRunner:
         temp_db = Path("data/benchmark_chunks.db")
         temp_qdrant = Path("data/benchmark_qdrant")
         print(f"\n--- Dense Indexing Benchmark (batch_size={batch_size}) ---")
+
+        from indexing import build_dense_index_from_db
 
         if not temp_db.exists():
             print("  SKIPPED: temp DB not found (run chunking first)")

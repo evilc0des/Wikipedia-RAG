@@ -1,5 +1,7 @@
+import os
 import pickle
 import re
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from qdrant_client import QdrantClient
@@ -208,36 +210,70 @@ def build_indexes(chunks, sparse_path=None, dense_path="data/qdrant"):
     return retriever, dense, chunk_store
 
 
+def _build_single_sparse_shard(args):
+    db_path, offset, shard_size, shard_id, output_dir = args
+    from db import ChunkStoreDB
+    db = ChunkStoreDB(db_path)
+    batch = db.get_children_by_type("child", limit=shard_size, offset=offset)
+    db.close()
+    if not batch:
+        return None
+    corpus = [tokenize(c["text"]) for c in batch]
+    bm25 = BM25Okapi(corpus)
+    shard_path = Path(output_dir) / f"shard_{shard_id:04d}.pkl"
+    with open(shard_path, "wb") as f:
+        pickle.dump({"bm25": bm25, "chunk_store": batch}, f)
+    return shard_id, len(batch)
+
+
 def build_sparse_indexes_from_db(db_path, output_dir, shard_size=100000):
     from db import ChunkStoreDB
     db = ChunkStoreDB(db_path)
     total = db.count_children("child")
+    db.close()
 
     output_path = Path(output_dir)
     existing_shards = sorted(output_path.glob("shard_*.pkl"))
     if existing_shards:
         last_shard_file = existing_shards[-1]
-        shard_id = int(last_shard_file.stem.split("_")[1])
-        start_offset = shard_id * shard_size
-        print(f"  Resuming sparse index from shard {shard_id} (offset={start_offset}/{total})")
+        last_id = int(last_shard_file.stem.split("_")[1])
+        start_id = last_id + 1
+        start_offset = start_id * shard_size
+        if start_offset < total:
+            print(f"  Resuming sparse index from shard {start_id} (offset={start_offset}/{total})")
+        else:
+            print(f"  All {total} children already indexed in {start_id} shards.")
+            return
     else:
-        shard_id = 0
+        start_id = 0
         start_offset = 0
 
+    tasks = []
+    shard_id = start_id
     for offset in range(start_offset, total, shard_size):
-        batch = db.get_children_by_type("child", limit=shard_size, offset=offset)
-        if not batch:
-            break
-        corpus = [tokenize(c["text"]) for c in batch]
-        bm25 = BM25Okapi(corpus)
-        shard_path = output_path / f"shard_{shard_id:04d}.pkl"
-        with open(shard_path, "wb") as f:
-            pickle.dump({"bm25": bm25, "chunk_store": batch}, f)
-        print(f"  BM25 shard {shard_id:04d}: {len(batch)} children -> {shard_path}")
+        tasks.append((db_path, offset, shard_size, shard_id, str(output_dir)))
         shard_id += 1
 
-    db.close()
-    print(f"  Built {shard_id} BM25 shards total.")
+    if not tasks:
+        return
+
+    if len(tasks) < 2:
+        print(f"  Building {len(tasks)} BM25 shard sequentially (below parallel threshold)...", flush=True)
+        for args in tasks:
+            result = _build_single_sparse_shard(args)
+            if result:
+                sid, count = result
+                print(f"  BM25 shard {sid:04d}: {count} children", flush=True)
+    else:
+        workers = min(os.cpu_count(), len(tasks))
+        print(f"  Building {len(tasks)} BM25 shards with {workers} workers...", flush=True)
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for result in executor.map(_build_single_sparse_shard, tasks):
+                if result:
+                    sid, count = result
+                    print(f"  BM25 shard {sid:04d}: {count} children", flush=True)
+
+    print(f"  Built {len(tasks)} BM25 shards total.", flush=True)
 
 
 def _is_dml_active(dense):
