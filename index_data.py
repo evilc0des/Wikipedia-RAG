@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 from pathlib import Path
 
 from chunking import process_pages
@@ -34,10 +35,33 @@ def main():
     parser.add_argument("--pages", type=int, default=2000, help="Number of pages to process (default: 2000)")
     parser.add_argument("--workers", type=int, default=os.cpu_count(),
                         help=f"Number of parallel chunking workers (default: {os.cpu_count()})")
+    parser.add_argument("--rebuild", action="store_true",
+                        help="Delete existing data and re-index from scratch (ignores resume state)")
     args = parser.parse_args()
 
     max_pages = args.pages
     workers = args.workers
+
+    if args.rebuild:
+        print("Rebuild requested — deleting existing data...")
+        for suffix in ("", "-shm", "-wal"):
+            p = Path(DB_PATH + suffix)
+            if p.exists():
+                p.unlink()
+                print(f"  Deleted {p}")
+        if Path(SPARSE_SHARDS_DIR).exists():
+            shutil.rmtree(SPARSE_SHARDS_DIR)
+            print(f"  Deleted {SPARSE_SHARDS_DIR}")
+        if qdrant_url:
+            from qdrant_client import QdrantClient
+            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+            if client.collection_exists("dense_index"):
+                client.delete_collection("dense_index")
+                print("  Deleted dense_index collection from Qdrant")
+            client.close()
+        elif Path(DENSE_PATH).exists():
+            shutil.rmtree(DENSE_PATH)
+            print(f"  Deleted {DENSE_PATH}")
 
     Path(SPARSE_SHARDS_DIR).mkdir(parents=True, exist_ok=True)
 
