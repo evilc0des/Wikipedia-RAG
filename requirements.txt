@@ -6,4 +6,6 @@ rank-bm25
 sentence-transformers
 requests
 python-dotenv
+fastapi
+uvicorn
 onnxruntime-gpu==1.21.0   # GPU: onnxruntime-gpu (CUDA, production) or onnxruntime-directml (DX12, Windows dev)
