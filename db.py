@@ -73,6 +73,19 @@ class ChunkStoreDB:
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
+    def get_chunks_by_doc_id(self, doc_id, chunk_type=None):
+        if chunk_type:
+            rows = self.conn.execute(
+                "SELECT * FROM chunks WHERE doc_id = ? AND chunk_type = ?",
+                (str(doc_id), chunk_type),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM chunks WHERE doc_id = ?",
+                (str(doc_id),),
+            ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
     def count_children(self, chunk_type=None):
         if chunk_type:
             row = self.conn.execute(
