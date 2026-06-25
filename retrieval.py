@@ -1,7 +1,6 @@
 from collections import defaultdict
 
 from reranking import Reranker, assemble_section_context
-from generation import build_context_blocks
 
 _reranker = None
 
@@ -27,7 +26,7 @@ def hybrid_retrieve(
     query_text,
     sparse_retriever,
     dense_retriever,
-    chunk_store,
+    db,
     top_k=10,
     sparse_k=30,
     dense_k=30,
@@ -50,14 +49,14 @@ def hybrid_retrieve(
         if chunk_id in seen:
             continue
         seen.add(chunk_id)
-        chunk = chunk_store.get(chunk_id)
+        chunk = db.get_chunk(chunk_id)
         if chunk is None:
             continue
 
         if expand_to_section and chunk.get("chunk_type") == "child":
             section_id = chunk.get("parent_id")
             if section_id:
-                section = chunk_store.get(section_id)
+                section = db.get_chunk(section_id)
                 if section and section_id not in seen:
                     seen.add(section_id)
                     result = {
@@ -100,7 +99,7 @@ def hybrid_retrieve_with_rerank(
     query_text,
     sparse_retriever,
     dense_retriever,
-    chunk_store,
+    db,
     fusion_top_k=50,
     rerank_top_k=8,
     section_top_k=3,
@@ -112,7 +111,7 @@ def hybrid_retrieve_with_rerank(
         query_text,
         sparse_retriever,
         dense_retriever,
-        chunk_store,
+        db,
         top_k=fusion_top_k,
         sparse_k=sparse_k,
         dense_k=dense_k,
@@ -127,7 +126,7 @@ def hybrid_retrieve_with_rerank(
     reranker = _get_reranker()
     reranked_children = reranker.rerank(query_text, candidates, top_k=rerank_top_k)
 
-    sections = assemble_section_context(reranked_children, chunk_store, top_sections=section_top_k)
+    sections = assemble_section_context(reranked_children, db, top_sections=section_top_k)
 
     return {
         "query": query_text,

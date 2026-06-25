@@ -23,7 +23,7 @@ class Reranker:
         return candidates[:top_k]
 
 
-def assemble_section_context(child_results, chunk_store, top_sections=3):
+def assemble_section_context(child_results, db, top_sections=3):
     if not child_results:
         return []
 
@@ -37,7 +37,8 @@ def assemble_section_context(child_results, chunk_store, top_sections=3):
         parent_id = child.get("parent_id")
         if not parent_id:
             continue
-        if parent_id not in chunk_store:
+        section = db.get_chunk(parent_id)
+        if section is None:
             continue
 
         rerank_score = child.get("rerank_score", -999.0)
@@ -58,7 +59,9 @@ def assemble_section_context(child_results, chunk_store, top_sections=3):
 
     results = []
     for section_id, data in sorted_sections:
-        section = chunk_store[section_id]
+        section = db.get_chunk(section_id)
+        if section is None:
+            continue
         results.append({
             **section,
             "score": data["best_rerank_score"],

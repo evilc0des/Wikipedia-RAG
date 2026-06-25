@@ -17,23 +17,42 @@ class SparseRetriever:
         self.bm25 = None
         self.corpus = []
         self.chunk_store = []
+        self.shards = []
+        self._is_sharded = False
 
     def index(self, chunks):
         children = [c for c in chunks if c.get("chunk_type") == "child"]
         self.corpus = [tokenize(c["text"]) for c in children]
         self.bm25 = BM25Okapi(self.corpus)
         self.chunk_store = children
+        self._is_sharded = False
 
     def search(self, query, top_k=5):
+        if self._is_sharded:
+            return self._search_sharded(query, top_k)
         if not self.bm25:
             return []
         query_tokens = tokenize(query)
         return self.bm25.get_top_n(query_tokens, self.chunk_store, n=top_k)
 
+    def _search_sharded(self, query, top_k=5):
+        query_tokens = tokenize(query)
+        all_results = []
+        for shard in self.shards:
+            results = shard["bm25"].get_top_n(
+                query_tokens, shard["chunk_store"], n=top_k * 3
+            )
+            all_results.extend(results)
+        all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
+        return all_results[:top_k]
+
     def save(self, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:
-            pickle.dump({"bm25": self.bm25, "corpus": self.corpus, "chunk_store": self.chunk_store}, f)
+            pickle.dump(
+                {"bm25": self.bm25, "corpus": self.corpus, "chunk_store": self.chunk_store},
+                f,
+            )
 
     @classmethod
     def load(cls, path):
@@ -43,6 +62,18 @@ class SparseRetriever:
         instance.bm25 = data["bm25"]
         instance.corpus = data["corpus"]
         instance.chunk_store = data["chunk_store"]
+        return instance
+
+    @classmethod
+    def load_sharded(cls, shards_dir):
+        instance = cls()
+        instance._is_sharded = True
+        shard_files = sorted(Path(shards_dir).glob("shard_*.pkl"))
+        print(f"Loading {len(shard_files)} BM25 shards from {shards_dir} ...")
+        for sf in shard_files:
+            with open(sf, "rb") as f:
+                data = pickle.load(f)
+            instance.shards.append(data)
         return instance
 
 
@@ -108,7 +139,7 @@ class DenseRetriever:
         self.client.upsert(collection_name=self.collection_name, points=points)
 
     def search(self, query, top_k=5):
-        if not self.chunk_store:
+        if not self.chunk_store and not self.client.collection_exists(self.collection_name):
             return []
 
         query_embedding = list(self.model.embed([query]))[0]
@@ -151,3 +182,80 @@ def build_indexes(chunks, sparse_path=None, dense_path="data/qdrant"):
 
     chunk_store = {c["chunk_id"]: c for c in chunks}
     return retriever, dense, chunk_store
+
+
+def build_sparse_indexes_from_db(db_path, output_dir, shard_size=100000):
+    from db import ChunkStoreDB
+    db = ChunkStoreDB(db_path)
+    total = db.count_children("child")
+    shard_id = 0
+
+    for offset in range(0, total, shard_size):
+        batch = db.get_children_by_type("child", limit=shard_size, offset=offset)
+        if not batch:
+            break
+        corpus = [tokenize(c["text"]) for c in batch]
+        bm25 = BM25Okapi(corpus)
+        shard_path = Path(output_dir) / f"shard_{shard_id:04d}.pkl"
+        with open(shard_path, "wb") as f:
+            pickle.dump({"bm25": bm25, "chunk_store": batch}, f)
+        print(f"  BM25 shard {shard_id:04d}: {len(batch)} children -> {shard_path}")
+        shard_id += 1
+
+    db.close()
+    print(f"  Built {shard_id} BM25 shards total.")
+
+
+def build_dense_index_from_db(db_path, dense_path, batch_size=1000):
+    from db import ChunkStoreDB
+    db = ChunkStoreDB(db_path)
+    total = db.count_children("child")
+
+    dense = DenseRetriever(storage_path=dense_path)
+
+    if dense.client.collection_exists(dense.collection_name):
+        dense.client.delete_collection(dense.collection_name)
+    dense.client.create_collection(
+        collection_name=dense.collection_name,
+        vectors_config=VectorParams(
+            size=384,
+            distance=Distance.COSINE,
+        ),
+    )
+
+    for offset in range(0, total, batch_size):
+        batch = db.get_children_by_type("child", limit=batch_size, offset=offset)
+        if not batch:
+            break
+        texts = [c["text"] for c in batch]
+        embeddings = list(dense.model.embed(texts))
+
+        points = [
+            PointStruct(
+                id=chunk["chunk_id"],
+                vector=emb.tolist(),
+                payload={
+                    "chunk_id": chunk["chunk_id"],
+                    "doc_id": chunk.get("doc_id"),
+                    "chunk_type": chunk.get("chunk_type"),
+                    "text": chunk["text"],
+                    "section_path": chunk.get("section_path"),
+                    "title": chunk.get("title"),
+                    "source_url": chunk.get("source_url"),
+                    "paragraph_start": chunk.get("paragraph_start"),
+                    "paragraph_end": chunk.get("paragraph_end"),
+                    "prev_id": chunk.get("prev_id"),
+                    "next_id": chunk.get("next_id"),
+                    "parent_id": chunk.get("parent_id"),
+                    "children_ids": chunk.get("children_ids", []),
+                },
+            )
+            for chunk, emb in zip(batch, embeddings)
+        ]
+        dense.client.upsert(collection_name=dense.collection_name, points=points)
+
+        if (offset // batch_size) % 10 == 0:
+            print(f"  Dense: embedded {offset + len(batch)}/{total} children")
+
+    db.close()
+    print(f"  Dense: embedded {total}/{total} children")

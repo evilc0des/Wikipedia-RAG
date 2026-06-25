@@ -1,18 +1,28 @@
-import pickle
 import sys
+from pathlib import Path
 
+from db import ChunkStoreDB
 from indexing import SparseRetriever, DenseRetriever
 from retrieval import hybrid_retrieve_with_rerank
 from generation import AnswerGenerator, build_context_blocks
 
-sparse_retriever = SparseRetriever.load("data/sparse_index.pkl")
+sparse_index_path = Path("data/sparse_index.pkl")
+sparse_shards_dir = Path("data/sparse_shards")
+
+if sparse_shards_dir.exists() and list(sparse_shards_dir.glob("shard_*.pkl")):
+    sparse_retriever = SparseRetriever.load_sharded(str(sparse_shards_dir))
+elif sparse_index_path.exists():
+    sparse_retriever = SparseRetriever.load(str(sparse_index_path))
+else:
+    print("No sparse index found at data/sparse_index.pkl or data/sparse_shards/")
+    sys.exit(1)
+
 dense_retriever = DenseRetriever.load()
-print(f"Sparse index loaded: {len(sparse_retriever.chunk_store)} children")
+print(f"Sparse index loaded: {len(sparse_retriever.shards) if sparse_retriever._is_sharded else 1} shard(s)")
 print(f"Dense index loaded: {len(dense_retriever.chunk_store)} children")
 
-with open("data/chunk_store.pkl", "rb") as f:
-    chunk_store = pickle.load(f)
-print(f"Chunk store loaded: {len(chunk_store)} entries")
+db = ChunkStoreDB("data/chunks.db")
+print(f"Chunk store loaded: {db.count_children()} entries")
 
 query = sys.argv[1] if len(sys.argv) > 1 else "What is the pronunciation and etymology of the letter Z?"
 
@@ -20,7 +30,7 @@ result = hybrid_retrieve_with_rerank(
     query,
     sparse_retriever,
     dense_retriever,
-    chunk_store,
+    db,
 )
 
 print(f"Query: {result['query']}")
@@ -49,3 +59,4 @@ for c in answer["citations"]:
     print(f"  {c['citation_id']}  source={c['source_id']}  section={c['section_id']}  children=[{kids}]")
 
 dense_retriever.client.close()
+db.close()
