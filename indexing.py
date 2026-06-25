@@ -188,15 +188,25 @@ def build_sparse_indexes_from_db(db_path, output_dir, shard_size=100000):
     from db import ChunkStoreDB
     db = ChunkStoreDB(db_path)
     total = db.count_children("child")
-    shard_id = 0
 
-    for offset in range(0, total, shard_size):
+    output_path = Path(output_dir)
+    existing_shards = sorted(output_path.glob("shard_*.pkl"))
+    if existing_shards:
+        last_shard_file = existing_shards[-1]
+        shard_id = int(last_shard_file.stem.split("_")[1])
+        start_offset = shard_id * shard_size
+        print(f"  Resuming sparse index from shard {shard_id} (offset={start_offset}/{total})")
+    else:
+        shard_id = 0
+        start_offset = 0
+
+    for offset in range(start_offset, total, shard_size):
         batch = db.get_children_by_type("child", limit=shard_size, offset=offset)
         if not batch:
             break
         corpus = [tokenize(c["text"]) for c in batch]
         bm25 = BM25Okapi(corpus)
-        shard_path = Path(output_dir) / f"shard_{shard_id:04d}.pkl"
+        shard_path = output_path / f"shard_{shard_id:04d}.pkl"
         with open(shard_path, "wb") as f:
             pickle.dump({"bm25": bm25, "chunk_store": batch}, f)
         print(f"  BM25 shard {shard_id:04d}: {len(batch)} children -> {shard_path}")
@@ -213,17 +223,27 @@ def build_dense_index_from_db(db_path, dense_path, batch_size=1000):
 
     dense = DenseRetriever(storage_path=dense_path)
 
-    if dense.client.collection_exists(dense.collection_name):
-        dense.client.delete_collection(dense.collection_name)
-    dense.client.create_collection(
-        collection_name=dense.collection_name,
-        vectors_config=VectorParams(
-            size=384,
-            distance=Distance.COSINE,
-        ),
-    )
+    collection_exists = dense.client.collection_exists(dense.collection_name)
+    existing_count = 0
+    if collection_exists:
+        existing_count = dense.client.count(collection_name=dense.collection_name).count
+        if existing_count == total:
+            print(f"  Dense index already complete ({total}/{total} children). Skipping.")
+            db.close()
+            return
+        if existing_count > 0:
+            print(f"  Resuming dense index from offset {existing_count}/{total}")
 
-    for offset in range(0, total, batch_size):
+    if not collection_exists:
+        dense.client.create_collection(
+            collection_name=dense.collection_name,
+            vectors_config=VectorParams(
+                size=384,
+                distance=Distance.COSINE,
+            ),
+        )
+
+    for offset in range(existing_count, total, batch_size):
         batch = db.get_children_by_type("child", limit=batch_size, offset=offset)
         if not batch:
             break
