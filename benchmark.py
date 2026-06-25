@@ -677,7 +677,7 @@ class BenchmarkRunner:
     # --- batch-layer benchmarks ---
 
     def benchmark_chunking(self):
-        num_pages = self.config.get("chunking_pages", 500)
+        num_pages = self.config.get("query_source_pages", 500)
         temp_db = Path("data/benchmark_chunks.db")
         print(f"\n--- Chunking Benchmark ({num_pages} pages) ---")
         _cleanup_path(temp_db)
@@ -937,15 +937,15 @@ def main():
         epilog="""Examples:
   python benchmark.py --layers all
   python benchmark.py --layers sparse,dense,rrf --num-queries 500
-  python benchmark.py --layers chunking,sparse-index,dense-index --chunking-pages 1000""",
+  python benchmark.py --layers chunking,sparse_indexing,dense_indexing --query-source-pages 2000""",
     )
     parser.add_argument("--layers", default="all",
                         help="Comma-separated: sparse,dense,rrf,rerank,section_assembly,"
                              "combined,generation,generation_standalone,"
                              "chunking,sparse_indexing,dense_indexing  (or 'all')")
     parser.add_argument("--num-queries", type=int, default=1000)
-    parser.add_argument("--query-source-pages", type=int, default=20000)
-    parser.add_argument("--chunking-pages", type=int, default=500)
+    parser.add_argument("--query-source-pages", type=int, default=20000,
+                        help="Pages streamed from dataset (used for query generation, chunking, and indexing benchmarks)")
     parser.add_argument("--sparse-shard-size", type=int, default=50000)
     parser.add_argument("--dense-batch-size", type=int, default=1000)
     parser.add_argument("--warmup", type=int, default=10)
@@ -982,7 +982,6 @@ def main():
         "layers": layers,
         "num_queries": args.num_queries,
         "query_source_pages": args.query_source_pages,
-        "chunking_pages": args.chunking_pages,
         "sparse_shard_size": args.sparse_shard_size,
         "dense_batch_size": args.dense_batch_size,
         "warmup": args.warmup,

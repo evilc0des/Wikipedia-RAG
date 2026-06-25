@@ -143,7 +143,7 @@ python benchmark.py --layers all
 python benchmark.py --layers sparse,dense,rrf,rerank,combined
 
 # Batch layers only (chunking + indexing throughput)
-python benchmark.py --layers chunking,sparse_indexing,dense_indexing --chunking-pages 1000
+python benchmark.py --layers chunking,sparse_indexing,dense_indexing --query-source-pages 2000
 
 # Quick retrieval test
 python benchmark.py --layers sparse,dense --num-queries 100
@@ -202,8 +202,7 @@ python benchmark.py [OPTIONS]
 |------|---------|-------------|
 | `--layers` | `all` | Comma-separated layer names or `all` |
 | `--num-queries` | `1000` | Number of queries to benchmark |
-| `--query-source-pages` | `20000` | Pages streamed to generate queries |
-| `--chunking-pages` | `500` | Pages processed in chunking benchmark |
+| `--query-source-pages` | `20000` | Pages streamed from dataset for query generation and chunking/indexing benchmarks |
 | `--sparse-shard-size` | `50000` | Children per BM25 shard |
 | `--dense-batch-size` | `1000` | Children per embedding batch |
 | `--warmup` | `10` | Warmup queries before timing |
