@@ -278,7 +278,7 @@ def build_sparse_indexes_from_db(db_path, output_dir, shard_size=100000):
                 sid, count = result
                 print(f"  BM25 shard {sid:04d}: {count} children", flush=True)
     else:
-        workers = min(os.cpu_count(), len(tasks))
+        workers = min(os.cpu_count(), len(tasks), 8)
         print(f"  Building {len(tasks)} BM25 shards with {workers} workers...", flush=True)
         with ProcessPoolExecutor(max_workers=workers) as executor:
             for result in executor.map(_build_single_sparse_shard, tasks):
