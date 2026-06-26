@@ -81,13 +81,14 @@ def main():
 
     CHUNKING_BATCH = 10000
 
+    skip_target = page_count
     pages = []
     skipped = 0
     for s in ds.take(max_pages):
-        if skipped < page_count:
+        if skipped < skip_target:
             skipped += 1
             if skipped % 1000 == 0:
-                print(f"  Skipped {skipped}/{page_count} pages...")
+                print(f"  Skipped {skipped}/{skip_target} pages...")
             continue
         pages.append(s)
         if len(pages) % 1000 == 0:
