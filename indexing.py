@@ -418,7 +418,7 @@ def wait_for_qdrant(qdrant_url, timeout_seconds=60, interval=2):
     last_error = None
     while time.monotonic() < deadline:
         try:
-            resp = requests.get(f"{qdrant_url.rstrip('/')}/health", timeout=5)
+            resp = requests.get(f"{qdrant_url.rstrip('/')}", timeout=5)
             if resp.status_code == 200:
                 return True
         except requests.RequestException as e:

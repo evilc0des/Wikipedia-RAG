@@ -79,6 +79,8 @@ def main():
               f"child={last_child_id}, section={last_section_id}, page={last_page_id}")
         print("Skipping already-processed pages...")
 
+    CHUNKING_BATCH = 10000
+
     pages = []
     skipped = 0
     for s in ds.take(max_pages):
@@ -88,10 +90,24 @@ def main():
                 print(f"  Skipped {skipped}/{page_count} pages...")
             continue
         pages.append(s)
+        if len(pages) % 1000 == 0:
+            print(f"  Collected {len(pages)} pages (streaming)...", flush=True)
+        if len(pages) >= CHUNKING_BATCH:
+            print(f"  Processing batch of {len(pages)} pages (total: ~{page_count + len(pages)})...", flush=True)
+            last_child_id, last_section_id, last_page_id, page_count = process_pages(
+                pages, db,
+                last_child_id=last_child_id,
+                last_section_id=last_section_id,
+                last_page_id=last_page_id,
+                page_count=page_count,
+                workers=workers,
+                progress=_index_progress,
+            )
+            db.commit()
+            pages = []
 
-    if not pages:
-        print("No new pages to process.")
-    else:
+    if pages:
+        print(f"  Processing final batch of {len(pages)} pages (total: ~{page_count + len(pages)})...", flush=True)
         last_child_id, last_section_id, last_page_id, page_count = process_pages(
             pages, db,
             last_child_id=last_child_id,
@@ -102,6 +118,8 @@ def main():
             progress=_index_progress,
         )
         db.commit()
+
+    if page_count > 0:
         print(f"Chunking complete. {page_count} pages, {db.count_children('child')} children in SQLite.")
 
     db.close()

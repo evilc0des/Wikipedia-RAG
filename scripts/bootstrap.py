@@ -26,6 +26,8 @@ def main():
                         help="HuggingFace API token (or set HF_TOKEN env var)")
     parser.add_argument("--force", action="store_true",
                         help="Re-download and re-import even if data exists")
+    parser.add_argument("--download-only", action="store_true",
+                        help="Download data files but skip Qdrant snapshot import")
     args = parser.parse_args()
 
     repo_id = args.repo
@@ -110,6 +112,10 @@ def main():
             sys.exit(1)
     else:
         print(f"Data files already exist. Use --force to re-download.")
+
+    if args.download_only:
+        print("Download complete (--download-only). Skipping Qdrant snapshot import.")
+        return
 
     # --- Step 2: Import snapshot into Docker Qdrant ---
 
