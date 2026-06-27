@@ -73,28 +73,45 @@ def main():
     last_page_id = db.get_last_chunk_id("page")
     page_count = db.count_children("page")
 
-    if page_count > 0:
-        last_doc_id = db.get_last_page_doc_id()
-        print(f"Resuming from page {page_count} (last doc_id={last_doc_id}). "
-              f"child={last_child_id}, section={last_section_id}, page={last_page_id}")
-        print("Skipping already-processed pages...")
+    if page_count >= max_pages:
+        print(f"Already indexed {page_count} pages (target: {max_pages}). Skipping chunking.")
+        db.close()
+    else:
+        if page_count > 0:
+            last_doc_id = db.get_last_page_doc_id()
+            print(f"Resuming from page {page_count} (last doc_id={last_doc_id}). "
+                  f"child={last_child_id}, section={last_section_id}, page={last_page_id}")
+            print("Skipping already-processed pages...")
 
-    CHUNKING_BATCH = 10000
+        CHUNKING_BATCH = 10000
+        skip_target = page_count
+        pages = []
+        skipped = 0
+        for s in ds.take(max_pages):
+            if skipped < skip_target:
+                skipped += 1
+                if skipped % 1000 == 0:
+                    print(f"  Skipped {skipped}/{skip_target} pages...")
+                continue
+            pages.append(s)
+            if len(pages) % 1000 == 0:
+                print(f"  Collected {len(pages)} pages (streaming)...", flush=True)
+            if len(pages) >= CHUNKING_BATCH:
+                print(f"  Processing batch of {len(pages)} pages (total: ~{page_count + len(pages)})...", flush=True)
+                last_child_id, last_section_id, last_page_id, page_count = process_pages(
+                    pages, db,
+                    last_child_id=last_child_id,
+                    last_section_id=last_section_id,
+                    last_page_id=last_page_id,
+                    page_count=page_count,
+                    workers=workers,
+                    progress=_index_progress,
+                )
+                db.commit()
+                pages = []
 
-    skip_target = page_count
-    pages = []
-    skipped = 0
-    for s in ds.take(max_pages):
-        if skipped < skip_target:
-            skipped += 1
-            if skipped % 1000 == 0:
-                print(f"  Skipped {skipped}/{skip_target} pages...")
-            continue
-        pages.append(s)
-        if len(pages) % 1000 == 0:
-            print(f"  Collected {len(pages)} pages (streaming)...", flush=True)
-        if len(pages) >= CHUNKING_BATCH:
-            print(f"  Processing batch of {len(pages)} pages (total: ~{page_count + len(pages)})...", flush=True)
+        if pages:
+            print(f"  Processing final batch of {len(pages)} pages (total: ~{page_count + len(pages)})...", flush=True)
             last_child_id, last_section_id, last_page_id, page_count = process_pages(
                 pages, db,
                 last_child_id=last_child_id,
@@ -105,25 +122,11 @@ def main():
                 progress=_index_progress,
             )
             db.commit()
-            pages = []
 
-    if pages:
-        print(f"  Processing final batch of {len(pages)} pages (total: ~{page_count + len(pages)})...", flush=True)
-        last_child_id, last_section_id, last_page_id, page_count = process_pages(
-            pages, db,
-            last_child_id=last_child_id,
-            last_section_id=last_section_id,
-            last_page_id=last_page_id,
-            page_count=page_count,
-            workers=workers,
-            progress=_index_progress,
-        )
-        db.commit()
+        if page_count > 0:
+            print(f"Chunking complete. {page_count} pages, {db.count_children('child')} children in SQLite.")
 
-    if page_count > 0:
-        print(f"Chunking complete. {page_count} pages, {db.count_children('child')} children in SQLite.")
-
-    db.close()
+        db.close()
 
     build_sparse_indexes_from_db(DB_PATH, SPARSE_SHARDS_DIR, shard_size=100000)
     print("Sparse (BM25 sharded) indexes built.")
