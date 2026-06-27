@@ -59,7 +59,8 @@ def main():
     snapshot_name = result["name"]
     print(f"  Snapshot created: {snapshot_name}")
 
-    tmpdir = Path(tempfile.mkdtemp(prefix="qdrant_snapshot_"))
+    tmpdir = Path("data/tmp/qdrant_snapshot")
+    tmpdir.mkdir(parents=True, exist_ok=True)
     snapshot_path = tmpdir / snapshot_name
     try:
         print(f"Downloading snapshot to {snapshot_path} ...")

@@ -386,7 +386,7 @@ def _qdrant_headers(api_key):
 
 def create_qdrant_snapshot(qdrant_url, collection_name, api_key=None):
     url = f"{qdrant_url.rstrip('/')}/collections/{collection_name}/snapshots"
-    resp = requests.post(url, headers=_qdrant_headers(api_key), timeout=60)
+    resp = requests.post(url, headers=_qdrant_headers(api_key), timeout=7200)
     resp.raise_for_status()
     data = resp.json()
     if not data.get("result") or not data["result"].get("name"):
@@ -396,11 +396,12 @@ def create_qdrant_snapshot(qdrant_url, collection_name, api_key=None):
 
 def download_qdrant_snapshot(qdrant_url, collection_name, snapshot_name, output_path, api_key=None):
     url = f"{qdrant_url.rstrip('/')}/collections/{collection_name}/snapshots/{snapshot_name}"
-    resp = requests.get(url, headers=_qdrant_headers(api_key), timeout=300)
-    resp.raise_for_status()
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "wb") as f:
-        f.write(resp.content)
+    with requests.get(url, headers=_qdrant_headers(api_key), stream=True, timeout=7200) as resp:
+        resp.raise_for_status()
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
     return output_path
 
 
