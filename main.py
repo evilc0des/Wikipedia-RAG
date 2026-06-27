@@ -3,23 +3,30 @@ from pathlib import Path
 
 from db import ChunkStoreDB
 from indexing import SparseRetriever, DenseRetriever
+from sparse_fts import SparseFTS5Retriever
 from retrieval import hybrid_retrieve_with_rerank
 from generation import AnswerGenerator, build_context_blocks
 
+fts_db_path = Path("data/sparse_fts.db")
 sparse_index_path = Path("data/sparse_index.pkl")
 sparse_shards_dir = Path("data/sparse_shards")
 
-if sparse_shards_dir.exists() and list(sparse_shards_dir.glob("shard_*.pkl")):
+# Prefer FTS5 (disk-backed, near-zero RAM) over legacy pickle shards
+sparse_retriever = SparseFTS5Retriever.load(str(fts_db_path))
+if sparse_retriever is not None:
+    print(f"Sparse index loaded: FTS5 ({sparse_retriever.count()} children, disk-backed)")
+elif sparse_shards_dir.exists() and list(sparse_shards_dir.glob("shard_*.pkl")):
     sparse_retriever = SparseRetriever.load_sharded(str(sparse_shards_dir))
+    print(f"Sparse index loaded: {len(sparse_retriever.shards)} legacy shard(s) [WARNING: high RAM]")
 elif sparse_index_path.exists():
     sparse_retriever = SparseRetriever.load(str(sparse_index_path))
+    print("Sparse index loaded: single legacy index [WARNING: high RAM]")
 else:
-    print("No sparse index found at data/sparse_index.pkl or data/sparse_shards/")
+    print("No sparse index found. Run index_data.py first.")
     sys.exit(1)
 
 dense_retriever = DenseRetriever.load()
 qdrant_mode = "remote" if dense_retriever._is_remote else "local (disk)"
-print(f"Sparse index loaded: {len(sparse_retriever.shards) if sparse_retriever._is_sharded else 1} shard(s)")
 print(f"Dense index loaded: {len(dense_retriever.chunk_store)} children  [qdrant: {qdrant_mode}]")
 
 db = ChunkStoreDB("data/chunks.db")

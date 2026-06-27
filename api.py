@@ -14,20 +14,25 @@ def _ensure_loaded():
         return
 
     from indexing import SparseRetriever, DenseRetriever
+    from sparse_fts import SparseFTS5Retriever
     from db import ChunkStoreDB
 
+    fts_db_path = Path("data/sparse_fts.db")
     sparse_shards_dir = Path("data/sparse_shards")
     sparse_index_path = Path("data/sparse_index.pkl")
 
-    if sparse_shards_dir.exists() and list(sparse_shards_dir.glob("shard_*.pkl")):
-        _sparse_retriever = SparseRetriever.load_sharded(str(sparse_shards_dir))
-    elif sparse_index_path.exists():
-        _sparse_retriever = SparseRetriever.load(str(sparse_index_path))
-    else:
-        raise HTTPException(
-            status_code=503,
-            detail="Indices not loaded. Run bootstrap first.",
-        )
+    # Prefer FTS5 (disk-backed, near-zero RAM) over legacy pickle shards
+    _sparse_retriever = SparseFTS5Retriever.load(str(fts_db_path))
+    if _sparse_retriever is None:
+        if sparse_shards_dir.exists() and list(sparse_shards_dir.glob("shard_*.pkl")):
+            _sparse_retriever = SparseRetriever.load_sharded(str(sparse_shards_dir))
+        elif sparse_index_path.exists():
+            _sparse_retriever = SparseRetriever.load(str(sparse_index_path))
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Indices not loaded. Run index_data.py first.",
+            )
 
     _dense_retriever = DenseRetriever.load()
     _db = ChunkStoreDB("data/chunks.db")

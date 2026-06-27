@@ -27,6 +27,7 @@ def _index_progress(event, *args):
 def main():
     from datasets import load_dataset
     from indexing import build_sparse_indexes_from_db, build_dense_index_from_db
+    from sparse_fts import SparseFTS5Retriever
 
     qdrant_url = os.environ.get("QDRANT_URL")
     qdrant_api_key = os.environ.get("QDRANT_API_KEY") or None
@@ -37,10 +38,14 @@ def main():
                         help=f"Number of parallel chunking workers (default: {os.cpu_count()})")
     parser.add_argument("--rebuild", action="store_true",
                         help="Delete existing data and re-index from scratch (ignores resume state)")
+    parser.add_argument("--legacy-bm25", action="store_true",
+                        help="Build old-style rank_bm25 pickle shards instead of FTS5 (high RAM usage)")
     args = parser.parse_args()
 
     max_pages = args.pages
     workers = args.workers
+
+    FTS_DB_PATH = "data/sparse_fts.db"
 
     if args.rebuild:
         print("Rebuild requested — deleting existing data...")
@@ -52,6 +57,11 @@ def main():
         if Path(SPARSE_SHARDS_DIR).exists():
             shutil.rmtree(SPARSE_SHARDS_DIR)
             print(f"  Deleted {SPARSE_SHARDS_DIR}")
+        for suffix in ("", "-shm", "-wal"):
+            p = Path(FTS_DB_PATH + suffix)
+            if p.exists():
+                p.unlink()
+                print(f"  Deleted {p}")
         if qdrant_url:
             from qdrant_client import QdrantClient
             client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
@@ -128,8 +138,15 @@ def main():
 
         db.close()
 
-    build_sparse_indexes_from_db(DB_PATH, SPARSE_SHARDS_DIR, shard_size=100000)
-    print("Sparse (BM25 sharded) indexes built.")
+    if args.legacy_bm25:
+        build_sparse_indexes_from_db(DB_PATH, SPARSE_SHARDS_DIR, shard_size=100000)
+        print("Sparse (BM25 sharded) indexes built.")
+    else:
+        print("Building FTS5 sparse index (disk-backed, low RAM)...")
+        fts = SparseFTS5Retriever(FTS_DB_PATH)
+        fts.build_from_db(DB_PATH)
+        fts.close()
+        print("Sparse (FTS5) index built.")
 
     build_dense_index_from_db(DB_PATH, DENSE_PATH, batch_size=1000,
                               qdrant_url=qdrant_url, qdrant_api_key=qdrant_api_key)
